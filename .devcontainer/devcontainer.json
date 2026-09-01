@@ -1,0 +1,59 @@
+{
+  "name": "kune -- Rust TUI for docker/podman",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+
+  // Rootless podman specifics. Both matter:
+  //   --userns=keep-id      maps host uid 1000 -> container uid 1000, so `vscode`
+  //                         owns the engine socket and the bind-mounted sources.
+  //                         Without it, podman maps the container user into a
+  //                         subuid range and the socket is unreadable.
+  //   --security-opt label=disable  no-op on this host (no SELinux), kept so the
+  //                         same config works on Fedora/RHEL.
+  "runArgs": [
+    "--userns=keep-id",
+    "--security-opt=label=disable"
+  ],
+
+  "mounts": [
+    // The live engine socket. Mounted at the Docker default path so bollard
+    // and the docker CLI find it with zero configuration.
+    "source=${localEnv:XDG_RUNTIME_DIR:/run/user/1000}/podman/podman.sock,target=/var/run/docker.sock,type=bind",
+
+    // Crate downloads survive rebuilds. target/ stays on the bind mount so
+    // cargo output remains visible from the host.
+    "source=kune-cargo-registry,target=/usr/local/cargo/registry,type=volume",
+    "source=kune-cargo-git,target=/usr/local/cargo/git,type=volume"
+  ],
+
+  "containerEnv": {
+    // crossterm/ratatui need these to emit colour and mouse sequences.
+    "TERM": "xterm-256color",
+    "COLORTERM": "truecolor",
+    "DOCKER_HOST": "unix:///var/run/docker.sock",
+    "RUST_BACKTRACE": "1"
+  },
+
+  "containerUser": "vscode",
+  "remoteUser": "vscode",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "vadimcn.vscode-lldb",
+        "fill-labs.dependi",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "rust-analyzer.check.command": "clippy",
+        "terminal.integrated.defaultProfile.linux": "zsh"
+      }
+    }
+  },
+
+  // Proves the toolchain works and, more importantly, that the socket mount
+  // plus userns mapping actually reach the engine. Fails loudly if not.
+  "postCreateCommand": "sudo chown -R \"$(id -u):$(id -g)\" \"$CARGO_HOME/registry\" \"$CARGO_HOME/git\" 2>/dev/null || true; rustc --version; cargo --version; docker version || echo 'WARNING: cannot reach the container engine at $DOCKER_HOST -- see .devcontainer/README.md'"
+}

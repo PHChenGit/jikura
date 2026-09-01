@@ -1,0 +1,51 @@
+# --- Rust build output ---
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock is intentionally NOT ignored. kune is a binary, not a library,
+# so the locked dependency set belongs in version control -- it is what makes
+# a build reproducible for everyone and in CI.
+
+# --- Coverage / profiling ---
+*.profraw
+*.profdata
+/coverage/
+tarpaulin-report.html
+perf.data
+perf.data.old
+flamegraph.svg
+
+# --- Runtime noise from the TUI ---
+# A TUI cannot print to stdout while it owns the screen, so logs usually go to
+# a file. Keep them out of the repo.
+*.log
+/logs/
+
+# --- Local secrets / engine config ---
+.env
+.env.*
+!.env.example
+
+# --- Editors ---
+# .vscode is partly shared: keep the files a teammate benefits from, drop the
+# per-machine state.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+\#*\#
+.\#*
+
+# --- OS ---
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+desktop.ini

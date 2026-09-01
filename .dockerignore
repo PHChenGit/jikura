@@ -1,0 +1,52 @@
+# Build context exclusions for a ROOT-context image build -- e.g. a release
+# Dockerfile that compiles the kune binary.
+#
+# This file does NOT affect the dev container. Its build context is
+# .devcontainer/ (see "build.dockerfile" in .devcontainer/devcontainer.json),
+# which holds only a Dockerfile and a README, so it needs no ignore file.
+#
+# podman reads .containerignore in preference to .dockerignore. Only this file
+# exists, so podman falls through to it -- do not add a .containerignore too,
+# or this one is silently ignored.
+
+# --- The big one: build output must never enter the context ---
+# target/ is often gigabytes and would be rebuilt in-image anyway.
+/target/
+**/target/
+
+# --- VCS and tooling ---
+.git/
+.gitignore
+.gitattributes
+.github/
+.devcontainer/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Docs and local scratch: no effect on the binary ---
+*.md
+LICENSE*
+docs/
+
+# --- Secrets and logs: keep them out of image layers entirely ---
+.env
+.env.*
+*.log
+/logs/
+
+# --- Coverage / profiling artifacts ---
+*.profraw
+*.profdata
+/coverage/
+perf.data*
+flamegraph.svg
+
+# Cargo.toml, Cargo.lock, and src/ are deliberately absent from this file --
+# a release build needs all three, and Cargo.lock is what pins the build.
