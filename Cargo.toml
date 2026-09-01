@@ -1,0 +1,36 @@
+[package]
+name = "jikura"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# --- engine layer -----------------------------------------------------------
+# Docker Engine API client. Points at DOCKER_HOST, which the devcontainer sets
+# to the bind-mounted rootless podman socket -- podman serves the same API, so
+# one client covers both engines. Local unix socket only: no "ssl"/"ssh".
+# "chrono" makes API timestamps DateTime<Utc> instead of raw i64 epochs, which
+# is what domain::Container::created wants.
+bollard = { version = "0.20", features = ["chrono"] }
+
+# Async runtime. "sync" for the mpsc channel carrying EngineEvent back to the
+# event loop, "time" for the refresh interval, "macros" for #[tokio::main].
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+
+# StreamExt: drives crossterm's EventStream and bollard's streaming endpoints.
+futures-util = "0.3"
+
+# --- ui layer ---------------------------------------------------------------
+ratatui = "0.30"
+
+# Must stay on the version ratatui re-exports as ratatui::crossterm -- two
+# crossterm versions in the tree means two incompatible `Event` types. The
+# direct dependency exists solely to enable "event-stream" (EventStream needs
+# it, and ratatui cannot turn it on for us). Verify with:
+#   cargo tree -i crossterm    # expect exactly one version
+crossterm = { version = "0.29", features = ["event-stream"] }
+
+# --- domain / errors / cli --------------------------------------------------
+chrono = "0.4"
+thiserror = "2"    # EngineError taxonomy; engine + domain layers only
+anyhow = "1"       # main.rs wiring only -- never crosses into engine/domain
+clap = { version = "4", features = ["derive"] }
