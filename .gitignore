@@ -49,3 +49,8 @@ flamegraph.svg
 ._*
 Thumbs.db
 desktop.ini
+
+
+# Added by cargo
+
+/target
