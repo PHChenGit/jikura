@@ -1,0 +1,11 @@
+# Copy to ~/.config/jikura/config.toml (or use jikura --config PATH).
+# Section names must match container names exactly, without a leading slash.
+# Missing containers or fields default to USER = "root", SHELL = "bash".
+
+[my-container]
+USER = "root"
+SHELL = "bash"
+
+["app.production"]
+USER = "app"
+SHELL = "/bin/sh"

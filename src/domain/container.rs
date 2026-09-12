@@ -174,6 +174,7 @@ impl ContainerState {
                 Restart,
             ) => true,
             (Self::Running, Pause) => true,
+            (Self::Running, Enter) => true,
             (Self::Paused, Unpause) => true,
             (Self::Created | Self::Exited | Self::Dead, RemoveContainer { force: false }) => true,
             // Deny by default; the engine corrects us if we are wrong.
@@ -361,6 +362,26 @@ mod tests {
         assert!(s.allows(ActionKind::Kill));
         assert!(s.allows(ActionKind::Pause));
         assert!(!s.allows(ActionKind::Unpause));
+    }
+
+    #[test]
+    fn only_running_containers_can_be_entered() {
+        for state in [
+            ContainerState::Created,
+            ContainerState::Running,
+            ContainerState::Paused,
+            ContainerState::Restarting,
+            ContainerState::Exited,
+            ContainerState::Dead,
+            ContainerState::Removing,
+            ContainerState::Unknown,
+        ] {
+            assert_eq!(
+                state.allows(ActionKind::Enter),
+                state == ContainerState::Running,
+                "{state}"
+            );
+        }
     }
 
     #[test]

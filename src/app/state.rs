@@ -129,12 +129,13 @@ impl App {
                 let Some(container) = self.containers.selected_item() else {
                     return Vec::new();
                 };
-                const ORDER: [ActionKind; 8] = [
+                const ORDER: [ActionKind; 9] = [
                     ActionKind::Start,
                     ActionKind::Stop,
                     ActionKind::Restart,
                     ActionKind::Pause,
                     ActionKind::Unpause,
+                    ActionKind::Enter,
                     ActionKind::Kill,
                     ActionKind::RemoveContainer { force: false },
                     ActionKind::RemoveContainer { force: true },
@@ -280,6 +281,17 @@ impl App {
     }
 
     fn dispatch(&mut self, action: ActionKind, target: Target) -> Vec<Command> {
+        if action == ActionKind::Enter
+            && !self.containers.items.iter().any(|container| {
+                target == Target::Container(container.id.clone()) && container.state.is_running()
+            })
+        {
+            self.toast(
+                "Enter requires a running container".to_owned(),
+                Severity::Warn,
+            );
+            return Vec::new();
+        }
         self.inflight.insert(target.clone(), action);
         vec![Command::Perform { action, target }]
     }
@@ -599,9 +611,56 @@ mod tests {
                 assert!(options.contains(&ActionKind::Start));
                 assert!(options.contains(&ActionKind::RemoveContainer { force: false }));
                 assert!(!options.contains(&ActionKind::Stop));
+                assert!(!options.contains(&ActionKind::Enter));
             }
             other => panic!("expected an action menu, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn entering_uses_the_selected_full_id_without_confirmation() {
+        let mut app = loaded_app();
+        let target = app.selected_target().unwrap();
+        act(&mut app, Action::OpenActionMenu);
+        let position = app
+            .available_actions()
+            .iter()
+            .position(|action| *action == ActionKind::Enter)
+            .unwrap();
+        for _ in 0..position {
+            act(&mut app, Action::NextItem);
+        }
+        assert_eq!(
+            act(&mut app, Action::Select),
+            vec![Command::Perform {
+                action: ActionKind::Enter,
+                target: target.clone(),
+            }]
+        );
+        assert!(app.modal.is_none());
+        assert_eq!(app.inflight.get(&target), Some(&ActionKind::Enter));
+    }
+
+    #[test]
+    fn entering_is_refused_if_the_container_stops_while_the_menu_is_open() {
+        let mut app = loaded_app();
+        act(&mut app, Action::OpenActionMenu);
+        let position = app
+            .available_actions()
+            .iter()
+            .position(|action| *action == ActionKind::Enter)
+            .unwrap();
+        for _ in 0..position {
+            act(&mut app, Action::NextItem);
+        }
+        app.update(Msg::Engine(EngineEvent::Containers(Ok(vec![container(
+            "web",
+            "aaaa000000001111",
+            ContainerState::Exited,
+        )]))));
+        assert!(act(&mut app, Action::Select).is_empty());
+        assert!(app.inflight.is_empty());
+        assert!(app.toasts.last().unwrap().text.contains("running"));
     }
 
     #[test]

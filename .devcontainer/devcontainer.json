@@ -1,8 +1,17 @@
 {
-  "name": "kune -- Rust TUI for docker/podman",
-  "build": {
-    "dockerfile": "Dockerfile"
-  },
+  "name": "jikura -- Rust TUI for docker/podman",
+
+  // Prebuilt locally with `podman build -t localhost/jikura:latest .` from the
+  // repo root (see ../Dockerfile). No "build" block: the image is expected to
+  // already exist in local storage, so nothing is pulled from a registry.
+  "image": "localhost/jikura:latest",
+
+  // Sources live under the container user's home instead of the default
+  // /workspaces/<repo>. Mounted at a subfolder, not directly at /home/vscode:
+  // binding over the home directory itself would shadow the image's dotfiles
+  // (.zshrc, oh-my-zsh) and $CARGO_HOME lives outside it anyway.
+  "workspaceMount": "source=${localWorkspaceFolder},target=/home/vscode/${localWorkspaceFolderBasename},type=bind,consistency=cached",
+  "workspaceFolder": "/home/vscode/${localWorkspaceFolderBasename}",
 
   // Rootless podman specifics. Both matter:
   //   --userns=keep-id      maps host uid 1000 -> container uid 1000, so `vscode`
@@ -23,8 +32,8 @@
 
     // Crate downloads survive rebuilds. target/ stays on the bind mount so
     // cargo output remains visible from the host.
-    "source=kune-cargo-registry,target=/usr/local/cargo/registry,type=volume",
-    "source=kune-cargo-git,target=/usr/local/cargo/git,type=volume"
+    "source=jikura-cargo-registry,target=/usr/local/cargo/registry,type=volume",
+    "source=jikura-cargo-git,target=/usr/local/cargo/git,type=volume"
   ],
 
   "containerEnv": {

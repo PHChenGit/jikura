@@ -36,6 +36,7 @@ pub enum ActionKind {
     Kill,
     Pause,
     Unpause,
+    Enter,
     /// `force` also removes a running container (API: `?force=1`).
     RemoveContainer {
         force: bool,
@@ -54,6 +55,7 @@ impl ActionKind {
         ActionKind::Kill,
         ActionKind::Pause,
         ActionKind::Unpause,
+        ActionKind::Enter,
         ActionKind::RemoveContainer { force: false },
         ActionKind::RemoveContainer { force: true },
         ActionKind::RemoveImage { force: false },
@@ -69,6 +71,7 @@ impl ActionKind {
             Self::Kill => "Kill",
             Self::Pause => "Pause",
             Self::Unpause => "Unpause",
+            Self::Enter => "Enter",
             Self::RemoveContainer { force: false } | Self::RemoveImage { force: false } => "Remove",
             Self::RemoveContainer { force: true } | Self::RemoveImage { force: true } => {
                 "Remove (force)"
@@ -85,6 +88,7 @@ impl ActionKind {
             Self::Kill => "killing",
             Self::Pause => "pausing",
             Self::Unpause => "unpausing",
+            Self::Enter => "entering",
             Self::RemoveContainer { .. } | Self::RemoveImage { .. } => "removing",
         }
     }

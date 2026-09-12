@@ -22,3 +22,14 @@ pub fn init() -> io::Result<DefaultTerminal> {
 pub fn restore() {
     ratatui::restore();
 }
+
+/// Lend the terminal to a foreground process, then rebuild the screen even if
+/// that process failed. The panic hook installed by `init` remains in place.
+pub fn with_suspended<T>(terminal: &mut DefaultTerminal, run: impl FnOnce() -> T) -> io::Result<T> {
+    terminal.show_cursor()?;
+    restore();
+    let result = run();
+    *terminal = ratatui::try_init()?;
+    terminal.clear()?;
+    Ok(result)
+}

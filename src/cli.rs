@@ -12,6 +12,11 @@ pub struct Args {
     #[arg(long, value_name = "URL")]
     pub host: Option<String>,
 
+    /// Container shell settings (default: $XDG_CONFIG_HOME/jikura/config.toml
+    /// or ~/.config/jikura/config.toml).
+    #[arg(long, value_name = "PATH")]
+    pub config: Option<std::path::PathBuf>,
+
     /// Seconds between automatic refreshes.
     #[arg(short, long, value_name = "SECS", default_value_t = 2, value_parser = clap::value_parser!(u64).range(1..=3600))]
     pub refresh: u64,

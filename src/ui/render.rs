@@ -481,6 +481,7 @@ mod tests {
         let output = screen(&app);
         assert!(output.contains("Stop"), "menu not drawn:\n{output}");
         assert!(output.contains("Restart"));
+        assert!(output.contains("Enter"));
         assert!(
             output.contains("web"),
             "menu should name its target:\n{output}"

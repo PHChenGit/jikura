@@ -7,8 +7,10 @@
 //!   ui/tui  -- renders app state; owns no state of its own
 pub mod app;
 pub mod cli;
+pub mod config;
 pub mod domain;
 pub mod engine;
+pub mod enter;
 pub mod runtime;
 pub mod tui;
 pub mod ui;
