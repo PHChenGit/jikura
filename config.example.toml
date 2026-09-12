@@ -1,11 +1,16 @@
 # Copy to ~/.config/jikura/config.toml (or use jikura --config PATH).
-# Section names must match container names exactly, without a leading slash.
+# Names under CONTAINERS must match exactly, without a leading slash.
 # Missing containers or fields default to USER = "root", SHELL = "bash".
 
-[my-container]
+[settings]
+# Optional GitLab registry API endpoint, reserved for fetching support.
+# Example: https://gitlab.example.com/api/v4/projects/123/registry/repositories
+GITLAB_IMAGE_API = ""
+
+[CONTAINERS.my-container]
 USER = "root"
 SHELL = "bash"
 
-["app.production"]
+[CONTAINERS."app.production"]
 USER = "app"
 SHELL = "/bin/sh"

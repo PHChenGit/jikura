@@ -28,24 +28,34 @@ clear the query. `Esc` outside the input also clears the search. Clearing
 immediately restores the full list under the current `a` (all) setting.
 Each page remembers its own query across tab switches and refreshes.
 
-## Container shell configuration
+## Configuration
 
 Jikura reads `$XDG_CONFIG_HOME/jikura/config.toml`, or
 `~/.config/jikura/config.toml` when `XDG_CONFIG_HOME` is unset. To use another
 file, run `jikura --config /path/to/config.toml`.
 
 ```toml
-[my-container]
+[settings]
+GITLAB_IMAGE_API = ""
+
+[CONTAINERS.my-container]
 USER = "root"
 SHELL = "bash"
 
-["app.production"]
+[CONTAINERS."app.production"]
 USER = "app"
 SHELL = "/bin/sh"
 ```
 
-Each section matches an exact container name, without a leading slash. Omitted
-fields and containers default to `root` and `bash`. `USER` names a user inside
+`GITLAB_IMAGE_API` stores the GitLab registry API endpoint; an empty value
+leaves it unset. `GITLAB_IAMGE_API` is accepted as an alias. This configuration
+change does not yet fetch or pull remote images.
+
+Each section under `CONTAINERS` matches an exact container name, without a
+leading slash. Existing flat sections such as `[my-container]` also work in
+files that have neither `[settings]` nor `[CONTAINERS]`. When adding either
+new section, move all container sections under `CONTAINERS` as shown above.
+Omitted fields and containers default to `root` and `bash`. `USER` names a user inside
 the container (a UID or `user:group` also works). `SHELL` is a single executable
 name or path inside the container; it is not a command line. Use `sh` or
 `/bin/sh` for images without Bash. Values are passed as literal arguments.

@@ -1,4 +1,4 @@
-//! Per-container settings, keyed by the exact container name.
+//! Application settings and per-container shell settings.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -23,13 +23,45 @@ impl Default for ShellConfig {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(transparent)]
-pub struct Config(BTreeMap<String, ShellConfig>);
+#[serde(default, deny_unknown_fields, rename_all = "UPPERCASE")]
+pub struct Settings {
+    #[serde(alias = "GITLAB_IAMGE_API")]
+    pub gitlab_image_api: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Config {
+    pub settings: Settings,
+    #[serde(rename = "CONTAINERS")]
+    containers: BTreeMap<String, ShellConfig>,
+}
 
 impl Config {
     pub fn parse(text: &str) -> anyhow::Result<Self> {
-        let config: Self = toml::from_str(text)?;
-        for (name, settings) in &config.0 {
+        let value: toml::Value = toml::from_str(text)?;
+        // Keep existing flat container files working. A structured file must
+        // put every container under CONTAINERS; mixed layouts are rejected.
+        let mut config: Self =
+            if value.get("settings").is_some() || value.get("CONTAINERS").is_some() {
+                value.try_into()?
+            } else {
+                Self {
+                    containers: value.try_into()?,
+                    ..Self::default()
+                }
+            };
+        if let Some(endpoint) = &mut config.settings.gitlab_image_api {
+            *endpoint = endpoint.trim().to_owned();
+            anyhow::ensure!(
+                !endpoint.contains('\0'),
+                "GITLAB_IMAGE_API must contain no NUL characters"
+            );
+            if endpoint.is_empty() {
+                config.settings.gitlab_image_api = None;
+            }
+        }
+        for (name, settings) in &config.containers {
             anyhow::ensure!(!name.trim().is_empty(), "container name must not be empty");
             for (key, value) in [("USER", &settings.user), ("SHELL", &settings.shell)] {
                 anyhow::ensure!(
@@ -58,7 +90,7 @@ impl Config {
     }
 
     pub fn for_container(&self, name: &str) -> ShellConfig {
-        self.0
+        self.containers
             .get(name.trim_start_matches('/'))
             .cloned()
             .unwrap_or_default()
@@ -80,6 +112,90 @@ fn default_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structured_configuration_separates_settings_from_container_names() {
+        let config = Config::parse(r#"
+            [settings]
+            GITLAB_IMAGE_API = "https://gitlab.example.com/api/v4/projects/123/registry/repositories"
+            [CONTAINERS.web]
+            USER = "app"
+            [CONTAINERS."db.prod"]
+            SHELL = "/bin/sh"
+            [CONTAINERS.settings]
+            USER = "service"
+        "#).unwrap();
+        assert_eq!(
+            config.settings.gitlab_image_api.as_deref(),
+            Some("https://gitlab.example.com/api/v4/projects/123/registry/repositories")
+        );
+        assert_eq!(
+            config.for_container("/web"),
+            ShellConfig {
+                user: "app".into(),
+                shell: "bash".into()
+            }
+        );
+        assert_eq!(
+            config.for_container("db.prod"),
+            ShellConfig {
+                user: "root".into(),
+                shell: "/bin/sh".into()
+            }
+        );
+        assert_eq!(config.for_container("settings").user, "service");
+        assert_eq!(config.for_container("missing"), ShellConfig::default());
+    }
+
+    #[test]
+    fn missing_or_blank_gitlab_settings_are_optional() {
+        for text in [
+            "",
+            "[settings]",
+            "[settings]\nGITLAB_IMAGE_API = '  '",
+            "[CONTAINERS.web]",
+        ] {
+            let config = Config::parse(text).unwrap();
+            assert!(config.settings.gitlab_image_api.is_none());
+            assert_eq!(config.for_container("web"), ShellConfig::default());
+        }
+    }
+
+    #[test]
+    fn accepts_the_original_misspelling_but_rejects_duplicate_keys() {
+        let config =
+            Config::parse("[settings]\nGITLAB_IAMGE_API = ' https://gitlab.example.com/api/v4 '")
+                .unwrap();
+        assert_eq!(
+            config.settings.gitlab_image_api.as_deref(),
+            Some("https://gitlab.example.com/api/v4")
+        );
+        assert!(
+            Config::parse("[settings]\nGITLAB_IMAGE_API = 'a'\nGITLAB_IAMGE_API = 'b'").is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_or_mixed_structured_configuration() {
+        for text in [
+            "[settings]\nUNKNOWN = 'a'",
+            "[settings]\nGITLAB_IMAGE_API = 12",
+            "[settings]\n[web]\nUSER = 'app'",
+            "[CONTAINERS.web]\nUSRE = 'app'",
+            "[CONTAINERS.web]\nSHELL = ''",
+            "[CONTAINERS.web]\nUSER = '  '",
+            "[CONTAINERS.' ']",
+        ] {
+            assert!(Config::parse(text).is_err(), "accepted {text}");
+        }
+    }
+
+    #[test]
+    fn the_example_configuration_loads() {
+        let config = Config::parse(include_str!("../config.example.toml")).unwrap();
+        assert_eq!(config.for_container("my-container"), ShellConfig::default());
+        assert_eq!(config.for_container("app.production").shell, "/bin/sh");
+    }
 
     #[test]
     fn resolves_exact_names_and_defaults_missing_fields() {
