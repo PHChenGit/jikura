@@ -72,6 +72,7 @@ pub struct App {
     pub tab: Tab,
     pub containers: ResourceList<Container>,
     pub images: ResourceList<Image>,
+    pub searching: bool,
     /// Include stopped containers (the `-a` of `docker ps`).
     pub show_all: bool,
     pub engine: Option<EngineInfo>,
@@ -87,8 +88,9 @@ impl App {
     pub fn new(show_all: bool) -> Self {
         Self {
             tab: Tab::default(),
-            containers: ResourceList::new(),
-            images: ResourceList::new(),
+            containers: ResourceList::with_search(super::search::container_matches),
+            images: ResourceList::with_search(super::search::image_matches),
+            searching: false,
             show_all,
             engine: None,
             modal: None,
@@ -185,6 +187,31 @@ impl App {
         }
 
         match action {
+            Action::StartSearch => {
+                self.searching = true;
+                Vec::new()
+            }
+            Action::SearchChar(c) if self.searching => {
+                let mut query = self.search_query().to_owned();
+                query.push(c);
+                self.set_search(query);
+                Vec::new()
+            }
+            Action::SearchBackspace if self.searching => {
+                let mut query = self.search_query().to_owned();
+                query.pop();
+                self.set_search(query);
+                Vec::new()
+            }
+            Action::ClearSearch => {
+                self.set_search(String::new());
+                Vec::new()
+            }
+            Action::SearchChar(_) | Action::SearchBackspace => Vec::new(),
+            Action::Select | Action::Dismiss if self.searching => {
+                self.searching = false;
+                Vec::new()
+            }
             Action::NextItem => {
                 self.active_list_mut(|list| list.select_next(), |list| list.select_next());
                 Vec::new()
@@ -216,11 +243,28 @@ impl App {
                 self.modal = Some(Modal::Help);
                 Vec::new()
             }
-            Action::Dismiss => Vec::new(),
+            Action::Dismiss => {
+                self.set_search(String::new());
+                Vec::new()
+            }
             Action::Quit => {
                 self.should_quit = true;
                 Vec::new()
             }
+        }
+    }
+
+    pub fn search_query(&self) -> &str {
+        match self.tab {
+            Tab::Containers => self.containers.query(),
+            Tab::Images => self.images.query(),
+        }
+    }
+
+    fn set_search(&mut self, query: String) {
+        match self.tab {
+            Tab::Containers => self.containers.set_query(query),
+            Tab::Images => self.images.set_query(query),
         }
     }
 
@@ -495,6 +539,167 @@ mod tests {
 
     fn act(app: &mut App, action: Action) -> Vec<Command> {
         app.update(Msg::Action(action))
+    }
+
+    fn search(app: &mut App, query: &str) {
+        act(app, Action::StartSearch);
+        act(app, Action::ClearSearch);
+        for c in query.chars() {
+            assert!(act(app, Action::SearchChar(c)).is_empty());
+        }
+    }
+
+    #[test]
+    fn container_search_matches_names_ids_and_the_containers_image() {
+        let mut app = loaded_app();
+        for query in ["WB", "aaaa00000000", "aaaa000000001111"] {
+            search(&mut app, query);
+            assert_eq!(app.containers.len(), 1, "{query}");
+            assert_eq!(
+                app.containers.selected_item().unwrap().display_name(),
+                "web"
+            );
+        }
+        for query in ["NGX", "5d0da3dc9764", "sha256:5d0da3dc976460b7"] {
+            search(&mut app, query);
+            assert_eq!(app.containers.len(), 2, "{query}");
+        }
+        app.containers.items[1].names.push("database".into());
+        search(&mut app, "DTBS");
+        assert_eq!(app.containers.len(), 1);
+        assert_eq!(app.containers.selected_item().unwrap().display_name(), "db");
+    }
+
+    #[test]
+    fn image_search_includes_secondary_tags_and_full_and_short_ids() {
+        let mut app = loaded_app();
+        let mut tagged = image("sha256:abcd1234567890ef", Some(0));
+        tagged
+            .repo_tags
+            .push(crate::domain::ImageRef::parse("registry/team/api:stable"));
+        let mut dangling = image("sha256:ffff99999999eeee", Some(0));
+        dangling.repo_tags.clear();
+        app.update(Msg::Engine(EngineEvent::Images(Ok(vec![tagged, dangling]))));
+        act(&mut app, Action::NextTab);
+        for query in [
+            "NGX",
+            "RG/TM/AP:ST",
+            "abcd12345678",
+            "abcd1234567890ef",
+            "sha256:abcd1234567890ef",
+        ] {
+            search(&mut app, query);
+            assert_eq!(app.images.len(), 1, "{query}");
+            assert_eq!(
+                app.images.selected_item().unwrap().id.hex(),
+                "abcd1234567890ef"
+            );
+        }
+        search(&mut app, "ffff99999999");
+        assert_eq!(app.images.len(), 1);
+        assert!(app.images.selected_item().unwrap().is_dangling());
+        act(&mut app, Action::ClearSearch);
+        assert_eq!(app.images.len(), 2);
+    }
+
+    #[test]
+    fn id_prefix_search_filters_both_pages_but_still_allows_name_matches() {
+        let id = "6d336809823dfg97dwoin12cjbiw";
+        let mut app = App::new(true);
+        let mut row = container("web", id, ContainerState::Running);
+        row.image_id = ImageId::from(format!("sha256:{id}"));
+        row.image = row.image_id.to_string();
+        let mut img = image(&format!("sha256:{id}"), Some(0));
+        img.repo_digests = vec![format!("nginx@sha256:{id}")];
+        app.update(Msg::Engine(EngineEvent::Containers(Ok(vec![row.clone()]))));
+        app.update(Msg::Engine(EngineEvent::Images(Ok(vec![img.clone()]))));
+        for tab in [Tab::Containers, Tab::Images] {
+            app.tab = tab;
+            search(&mut app, "6d33");
+            assert!(app.selected_target().is_some(), "{tab:?}");
+            for query in ["dfg97", "6c33", "6d38"] {
+                search(&mut app, query);
+                assert!(app.selected_target().is_none(), "{tab:?}: {query}");
+            }
+            act(&mut app, Action::ClearSearch);
+            assert!(app.selected_target().is_some());
+        }
+
+        row.names = vec!["dfg-service-97".into()];
+        img.repo_tags
+            .push(crate::domain::ImageRef::parse("dfg-service:97"));
+        app.update(Msg::Engine(EngineEvent::Containers(Ok(vec![row]))));
+        app.update(Msg::Engine(EngineEvent::Images(Ok(vec![img]))));
+        for tab in [Tab::Containers, Tab::Images] {
+            app.tab = tab;
+            search(&mut app, "dfg97");
+            assert!(
+                app.selected_target().is_some(),
+                "name should match on {tab:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn search_queries_are_independent_and_clearing_restores_each_page() {
+        let mut app = loaded_app();
+        search(&mut app, "db");
+        act(&mut app, Action::NextTab);
+        assert_eq!(app.search_query(), "");
+        search(&mut app, "不存在");
+        assert!(app.images.is_empty());
+        act(&mut app, Action::SearchBackspace);
+        assert_eq!(app.search_query(), "不存");
+        act(&mut app, Action::ClearSearch);
+        assert_eq!(app.images.len(), 1);
+        act(&mut app, Action::PrevTab);
+        assert_eq!(app.search_query(), "db");
+        act(&mut app, Action::SearchBackspace);
+        act(&mut app, Action::SearchBackspace);
+        assert_eq!(app.containers.len(), 2);
+        assert_eq!(app.search_query(), "");
+    }
+
+    #[test]
+    fn finishing_search_then_acting_targets_the_filtered_row() {
+        let mut app = loaded_app();
+        search(&mut app, "bbbb");
+        assert!(act(&mut app, Action::Select).is_empty());
+        assert!(!app.searching);
+        assert!(app.modal.is_none());
+        assert_eq!(app.containers.len(), 1);
+        act(&mut app, Action::OpenActionMenu);
+        assert_eq!(
+            act(&mut app, Action::Select),
+            vec![Command::Perform {
+                action: ActionKind::Start,
+                target: Target::Container(ContainerId::from("bbbb000000002222".to_owned())),
+            }]
+        );
+        act(&mut app, Action::Dismiss);
+        assert_eq!(app.containers.len(), 2);
+    }
+
+    #[test]
+    fn unmatched_search_cannot_act_and_remains_applied_on_refresh() {
+        let mut app = loaded_app();
+        search(&mut app, "worker");
+        act(&mut app, Action::Dismiss);
+        assert!(!app.searching);
+        assert!(act(&mut app, Action::OpenActionMenu).is_empty());
+        assert!(app.modal.is_none());
+        assert_eq!(app.selected_target(), None);
+        app.update(Msg::Engine(EngineEvent::Containers(Ok(vec![
+            container("worker", "dddd000000004444", ContainerState::Running),
+            container("web", "aaaa000000001111", ContainerState::Running),
+        ]))));
+        assert_eq!(app.containers.len(), 1);
+        assert_eq!(
+            app.containers.selected_item().unwrap().display_name(),
+            "worker"
+        );
+        act(&mut app, Action::Dismiss);
+        assert_eq!(app.containers.len(), 2);
     }
 
     #[test]

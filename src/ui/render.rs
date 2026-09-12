@@ -14,7 +14,7 @@ use super::theme;
 
 /// Shown in the footer when there is nothing more urgent to say.
 const KEY_HINTS: &str =
-    "j/k move | tab switch pane | x actions | a all | r refresh | ? help | q quit";
+    "j/k move | tab pane | / search | x actions | a all | r refresh | ? help | q quit";
 
 /// Widget-owned state that must persist between frames: the scroll offsets.
 #[derive(Debug, Default)]
@@ -30,7 +30,8 @@ impl UiState {
 }
 
 pub fn draw(frame: &mut Frame, app: &App, ui: &mut UiState) {
-    let [header, body, footer] = Layout::vertical([
+    let [header, search, body, footer] = Layout::vertical([
+        Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Min(1),
         Constraint::Length(1),
@@ -38,6 +39,7 @@ pub fn draw(frame: &mut Frame, app: &App, ui: &mut UiState) {
     .areas(frame.area());
 
     draw_header(frame, app, header);
+    draw_search(frame, app, search);
     match app.tab {
         Tab::Containers => draw_containers(frame, app, &mut ui.containers, body),
         Tab::Images => draw_images(frame, app, &mut ui.images, body),
@@ -46,6 +48,33 @@ pub fn draw(frame: &mut Frame, app: &App, ui: &mut UiState) {
 
     if let Some(modal) = &app.modal {
         draw_modal(frame, app, modal);
+    }
+}
+
+fn draw_search(frame: &mut Frame, app: &App, area: Rect) {
+    if area.is_empty() {
+        return;
+    }
+    let editing = app.searching && app.modal.is_none();
+    let line = Line::from(format!("Search (/): {}", app.search_query()));
+    let width = line.width();
+    let scroll = if editing {
+        width.saturating_sub(usize::from(area.width) - 1)
+    } else {
+        0
+    };
+    frame.render_widget(
+        Paragraph::new(line)
+            .scroll((0, scroll.min(u16::MAX as usize) as u16))
+            .style(if editing {
+                theme::selected_style()
+            } else {
+                theme::dim_style()
+            }),
+        area,
+    );
+    if editing {
+        frame.set_cursor_position((area.x + (width - scroll) as u16, area.y));
     }
 }
 
@@ -83,15 +112,25 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_containers(frame: &mut Frame, app: &App, state: &mut TableState, area: Rect) {
     let filter = if app.show_all { "all" } else { "running" };
-    let block =
-        Block::bordered().title(format!(" containers ({}, {filter}) ", app.containers.len()));
+    let block = Block::bordered().title(format!(
+        " containers ({}/{}, {filter}) ",
+        app.containers.len(),
+        app.containers.items.len()
+    ));
 
     if app.containers.is_empty() {
-        frame.render_widget(empty_note("no containers", block), area);
+        state.select(None);
+        *state.offset_mut() = 0;
+        let note = if app.containers.query().is_empty() {
+            "no containers"
+        } else {
+            "no matching containers"
+        };
+        frame.render_widget(empty_note(note, block), area);
         return;
     }
 
-    let rows = app.containers.items.iter().map(|c| {
+    let rows = app.containers.visible_items().map(|c| {
         let busy = app.inflight.get(&Target::Container(c.id.clone()));
         // A row mid-action says what it is doing rather than a stale state.
         let (state_text, state_style) = match busy {
@@ -106,6 +145,7 @@ fn draw_containers(frame: &mut Frame, app: &App, state: &mut TableState, area: R
         };
         Row::new(vec![
             Cell::from(c.display_name().to_owned()),
+            Cell::from(c.id.short().to_owned()),
             Cell::from(c.image_label().to_owned()),
             Cell::from(state_text).style(state_style),
             Cell::from(c.status_text.clone()),
@@ -116,15 +156,17 @@ fn draw_containers(frame: &mut Frame, app: &App, state: &mut TableState, area: R
     let table = Table::new(
         rows,
         [
-            Constraint::Percentage(18),
-            Constraint::Percentage(22),
-            Constraint::Length(12),
+            Constraint::Percentage(16),
+            Constraint::Length(14),
             Constraint::Percentage(20),
+            Constraint::Length(12),
+            Constraint::Percentage(16),
             Constraint::Min(10),
         ],
     )
     .header(
-        Row::new(vec!["NAME", "IMAGE", "STATE", "STATUS", "PORTS"]).style(theme::header_style()),
+        Row::new(vec!["NAME", "ID", "IMAGE", "STATE", "STATUS", "PORTS"])
+            .style(theme::header_style()),
     )
     .row_highlight_style(theme::selected_style())
     .highlight_symbol("> ")
@@ -135,14 +177,25 @@ fn draw_containers(frame: &mut Frame, app: &App, state: &mut TableState, area: R
 }
 
 fn draw_images(frame: &mut Frame, app: &App, state: &mut TableState, area: Rect) {
-    let block = Block::bordered().title(format!(" images ({}) ", app.images.len()));
+    let block = Block::bordered().title(format!(
+        " images ({}/{}) ",
+        app.images.len(),
+        app.images.items.len()
+    ));
 
     if app.images.is_empty() {
-        frame.render_widget(empty_note("no images", block), area);
+        state.select(None);
+        *state.offset_mut() = 0;
+        let note = if app.images.query().is_empty() {
+            "no images"
+        } else {
+            "no matching images"
+        };
+        frame.render_widget(empty_note(note, block), area);
         return;
     }
 
-    let rows = app.images.items.iter().map(|img| {
+    let rows = app.images.visible_items().map(|img| {
         let busy = app.inflight.get(&Target::Image(img.id.clone()));
         let used_by = match img.containers {
             Some(count) => count.to_string(),
@@ -211,7 +264,13 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Tab::Images => &app.images.load,
     };
 
-    let (text, style) = if let Some(toast) = app.toasts.last() {
+    let (text, style) = if app.searching && app.modal.is_none() {
+        (
+            "Type to filter | backspace delete | ctrl-u clear | enter/esc finish | tab pane"
+                .to_owned(),
+            theme::dim_style(),
+        )
+    } else if let Some(toast) = app.toasts.last() {
         (toast.text.clone(), theme::severity_style(toast.severity))
     } else if let LoadState::Failed { message } = active_load {
         (message.clone(), theme::severity_style(Severity::Bad))
@@ -224,7 +283,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_modal(frame: &mut Frame, app: &App, modal: &Modal) {
     let area = match modal {
-        Modal::Help => centred(frame.area(), 56, 60),
+        Modal::Help => centred(frame.area(), 60, 80),
         _ => centred(frame.area(), 44, 46),
     };
     // Clear first: a popup over a table must not show the table through it.
@@ -278,7 +337,10 @@ fn draw_modal(frame: &mut Frame, app: &App, modal: &Modal) {
                 Line::from("x / enter     actions for the row"),
                 Line::from("a             show all (stopped too)"),
                 Line::from("r             refresh now"),
-                Line::from("esc           close"),
+                Line::from("/             edit fuzzy search"),
+                Line::from("ctrl-u        clear search while editing"),
+                Line::from("enter / esc   finish editing search"),
+                Line::from("esc           close / clear search"),
                 Line::from("q / ctrl-c    quit"),
             ]);
             frame.render_widget(
@@ -539,5 +601,47 @@ mod tests {
         terminal
             .draw(|frame| draw(frame, &app, &mut ui))
             .expect("must survive a tiny viewport");
+    }
+
+    #[test]
+    fn search_displays_only_matches_and_explains_empty_results_on_both_pages() {
+        let mut app = app();
+        app.update(Msg::Action(Action::StartSearch));
+        for c in "bbbb".chars() {
+            app.update(Msg::Action(Action::SearchChar(c)));
+        }
+        let output = screen(&app);
+        assert!(output.contains("Search (/): bbbb"));
+        assert!(output.contains("containers (1/2"));
+        assert!(!output.contains("web"));
+        app.update(Msg::Action(Action::SearchChar('z')));
+        assert!(screen(&app).contains("no matching containers"));
+        app.update(Msg::Action(Action::ClearSearch));
+        assert!(screen(&app).contains("web"));
+
+        app.update(Msg::Action(Action::NextTab));
+        app.update(Msg::Action(Action::SearchChar('z')));
+        let output = screen(&app);
+        assert!(output.contains("no matching images"));
+        assert!(!output.contains("nginx:latest"));
+        app.update(Msg::Action(Action::ClearSearch));
+        assert!(screen(&app).contains("nginx:latest"));
+    }
+
+    #[test]
+    fn long_unicode_search_keeps_the_cursor_inside_small_viewports() {
+        let mut app = app();
+        app.update(Msg::Action(Action::StartSearch));
+        for c in "界".repeat(100).chars() {
+            app.update(Msg::Action(Action::SearchChar(c)));
+        }
+        for (width, height) in [(20, 5), (1, 3), (1, 1)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| draw(frame, &app, &mut UiState::new()))
+                .unwrap();
+            let cursor = terminal.get_cursor_position().unwrap();
+            assert!(cursor.x < width && cursor.y < height);
+        }
     }
 }

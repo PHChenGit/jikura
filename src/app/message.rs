@@ -14,6 +14,10 @@ pub enum Action {
     /// Show stopped containers too.
     ToggleAll,
     Refresh,
+    StartSearch,
+    SearchChar(char),
+    SearchBackspace,
+    ClearSearch,
     /// Open the action menu for the selected row.
     OpenActionMenu,
     /// Enter: pick the highlighted menu entry, or answer a confirmation yes.

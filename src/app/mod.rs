@@ -1,5 +1,6 @@
 mod list;
 mod message;
+mod search;
 mod state;
 
 pub use list::{LoadState, ResourceList};

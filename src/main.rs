@@ -72,7 +72,7 @@ async fn run<E: Engine>(
                 if event::poll(Duration::ZERO).context("terminal input failed")? {
                     let event = event::read().context("terminal input failed")?;
                     redraw = true;
-                    ui::msg_for(&event)
+                    ui::msg_for(&event, app.searching && app.modal.is_none())
                 } else {
                     None
                 }

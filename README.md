@@ -12,6 +12,22 @@ engine endpoint as the container page (`--host`, `DOCKER_HOST`, or the default
 socket). The shell controls the terminal while it runs, including `Ctrl-C`
 and terminal resizing.
 
+## Search
+
+Press `/` on either page and type to filter the list immediately. Name matching
+ignores case and allows gaps: `ngx` matches `nginx`. IDs require a contiguous
+prefix: `6d33` matches `6d336809823`, while `6809` and `6d38` do not. The
+`sha256:` prefix is optional when searching image IDs. Containers match any
+container name or ID, plus their image name or ID. Images match their ID and
+all repository tags and digests, including tags beyond the one shown in the
+table. Both full and shortened IDs work.
+
+Press `Enter` or `Esc` to finish editing and navigate the matching rows.
+Press `/` to edit again, `Backspace` to delete, or `Ctrl-U` while editing to
+clear the query. `Esc` outside the input also clears the search. Clearing
+immediately restores the full list under the current `a` (all) setting.
+Each page remembers its own query across tab switches and refreshes.
+
 ## Container shell configuration
 
 Jikura reads `$XDG_CONFIG_HOME/jikura/config.toml`, or

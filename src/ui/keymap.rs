@@ -7,9 +7,37 @@ use crate::app::{Action, Msg};
 
 /// Terminal event to app message. Resizes, mouse moves and focus changes carry
 /// no intent: a redraw already happens every frame.
-pub fn msg_for(event: &Event) -> Option<Msg> {
+pub fn msg_for(event: &Event, searching: bool) -> Option<Msg> {
     match event {
+        Event::Key(key) if searching => search_action_for(key).map(Msg::Action),
         Event::Key(key) => action_for(key).map(Msg::Action),
+        _ => None,
+    }
+}
+
+fn search_action_for(event: &KeyEvent) -> Option<Action> {
+    if event.kind == KeyEventKind::Release {
+        return None;
+    }
+    if event.modifiers == KeyModifiers::CONTROL {
+        return match event.code {
+            KeyCode::Char('u') => Some(Action::ClearSearch),
+            KeyCode::Char('c') => Some(Action::Quit),
+            _ => None,
+        };
+    }
+    if !(event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT) {
+        return None;
+    }
+    match event.code {
+        KeyCode::Char(c) => Some(Action::SearchChar(c)),
+        KeyCode::Backspace => Some(Action::SearchBackspace),
+        KeyCode::Enter => Some(Action::Select),
+        KeyCode::Esc => Some(Action::Dismiss),
+        KeyCode::Down => Some(Action::NextItem),
+        KeyCode::Up => Some(Action::PrevItem),
+        KeyCode::Tab => Some(Action::NextTab),
+        KeyCode::BackTab => Some(Action::PrevTab),
         _ => None,
     }
 }
@@ -43,6 +71,7 @@ pub fn action_for(event: &KeyEvent) -> Option<Action> {
         KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => Some(Action::PrevTab),
         KeyCode::Char('a') => Some(Action::ToggleAll),
         KeyCode::Char('r') => Some(Action::Refresh),
+        KeyCode::Char('/') => Some(Action::StartSearch),
         KeyCode::Char('x') => Some(Action::OpenActionMenu),
         KeyCode::Enter => Some(Action::Select),
         KeyCode::Esc => Some(Action::Dismiss),
@@ -122,15 +151,15 @@ mod tests {
 
     #[test]
     fn a_keypress_becomes_an_action_message() {
-        let msg = msg_for(&Event::Key(key(KeyCode::Char('r'))));
+        let msg = msg_for(&Event::Key(key(KeyCode::Char('r'))), false);
         assert!(matches!(msg, Some(Msg::Action(Action::Refresh))));
     }
 
     #[test]
     fn events_carrying_no_intent_are_dropped() {
-        assert!(msg_for(&Event::Resize(80, 24)).is_none());
-        assert!(msg_for(&Event::FocusGained).is_none());
-        assert!(msg_for(&Event::Key(key(KeyCode::Char('z')))).is_none());
+        assert!(msg_for(&Event::Resize(80, 24), false).is_none());
+        assert!(msg_for(&Event::FocusGained, false).is_none());
+        assert!(msg_for(&Event::Key(key(KeyCode::Char('z'))), false).is_none());
     }
 
     #[test]
@@ -139,5 +168,37 @@ mod tests {
             action_for(&KeyEvent::new(KeyCode::Char('q'), KeyModifiers::ALT)),
             None
         );
+    }
+
+    #[test]
+    fn search_captures_shortcut_characters_as_text() {
+        for c in "qjkgGhlaxr?/你好".chars() {
+            assert!(matches!(msg_for(&Event::Key(key(KeyCode::Char(c))), true),
+                Some(Msg::Action(Action::SearchChar(actual))) if actual == c));
+        }
+        assert_eq!(
+            action_for(&key(KeyCode::Char('/'))),
+            Some(Action::StartSearch)
+        );
+        assert_eq!(
+            search_action_for(&key(KeyCode::Backspace)),
+            Some(Action::SearchBackspace)
+        );
+        assert_eq!(
+            search_action_for(&KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+            Some(Action::ClearSearch)
+        );
+        assert_eq!(
+            search_action_for(&KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(Action::Quit)
+        );
+        assert_eq!(
+            search_action_for(&key(KeyCode::Enter)),
+            Some(Action::Select)
+        );
+        assert_eq!(search_action_for(&key(KeyCode::Esc)), Some(Action::Dismiss));
+        let mut release = key(KeyCode::Char('a'));
+        release.kind = KeyEventKind::Release;
+        assert!(msg_for(&Event::Key(release), true).is_none());
     }
 }

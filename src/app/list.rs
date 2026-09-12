@@ -20,7 +20,11 @@ pub enum LoadState {
 /// derives widget state from `selected` each frame.
 #[derive(Debug, Clone, Default)]
 pub struct ResourceList<T> {
+    /// Complete engine snapshot, including rows hidden by search.
     pub items: Vec<T>,
+    visible: Vec<usize>,
+    query: String,
+    matches: Option<fn(&T, &str) -> bool>,
     selected: Option<usize>,
     pub load: LoadState,
 }
@@ -29,17 +33,62 @@ impl<T> ResourceList<T> {
     pub fn new() -> Self {
         Self {
             items: Vec::new(),
+            visible: Vec::new(),
+            query: String::new(),
+            matches: None,
             selected: None,
             load: LoadState::Never,
         }
     }
 
     pub fn len(&self) -> usize {
-        self.items.len()
+        self.visible.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
+        self.visible.is_empty()
+    }
+
+    pub fn with_search(matches: fn(&T, &str) -> bool) -> Self {
+        Self {
+            matches: Some(matches),
+            ..Self::new()
+        }
+    }
+
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
+    pub fn visible_items(&self) -> impl Iterator<Item = &T> {
+        self.visible.iter().map(|&index| &self.items[index])
+    }
+
+    pub fn set_query(&mut self, query: String) {
+        let previous = self
+            .selected
+            .and_then(|index| self.visible.get(index))
+            .copied();
+        self.query = query;
+        self.refilter();
+        self.selected = previous
+            .and_then(|wanted| self.visible.iter().position(|&index| index == wanted))
+            .or_else(|| (!self.is_empty()).then_some(0));
+    }
+
+    fn refilter(&mut self) {
+        self.visible = self
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                self.query.is_empty()
+                    || self
+                        .matches
+                        .is_none_or(|matches| matches(item, &self.query))
+            })
+            .map(|(index, _)| index)
+            .collect();
     }
 
     pub fn selected(&self) -> Option<usize> {
@@ -47,37 +96,39 @@ impl<T> ResourceList<T> {
     }
 
     pub fn selected_item(&self) -> Option<&T> {
-        self.selected.and_then(|index| self.items.get(index))
+        self.selected
+            .and_then(|index| self.visible.get(index))
+            .map(|&index| &self.items[index])
     }
 
     /// Wraps at the ends -- long lists are quicker to reach from either side.
     pub fn select_next(&mut self) {
-        if self.items.is_empty() {
+        if self.is_empty() {
             return;
         }
         self.selected = Some(match self.selected {
-            Some(index) if index + 1 < self.items.len() => index + 1,
+            Some(index) if index + 1 < self.len() => index + 1,
             Some(_) => 0,
             None => 0,
         });
     }
 
     pub fn select_previous(&mut self) {
-        if self.items.is_empty() {
+        if self.is_empty() {
             return;
         }
         self.selected = Some(match self.selected {
-            Some(0) | None => self.items.len() - 1,
+            Some(0) | None => self.len() - 1,
             Some(index) => index - 1,
         });
     }
 
     pub fn select_first(&mut self) {
-        self.selected = (!self.items.is_empty()).then_some(0);
+        self.selected = (!self.is_empty()).then_some(0);
     }
 
     pub fn select_last(&mut self) {
-        self.selected = self.items.len().checked_sub(1);
+        self.selected = self.len().checked_sub(1);
     }
 
     /// Swaps in fresh rows, keeping the cursor on the same *item* rather than
@@ -92,16 +143,16 @@ impl<T> ResourceList<T> {
         let previous_index = self.selected;
 
         self.items = items;
+        self.refilter();
         self.load = LoadState::Loaded { at };
 
-        self.selected = if self.items.is_empty() {
+        self.selected = if self.is_empty() {
             None
         } else if let Some(wanted) = previous_key {
             // Same item if it is still here, otherwise hold the position.
-            self.items
-                .iter()
+            self.visible_items()
                 .position(|item| key(item) == wanted)
-                .or_else(|| previous_index.map(|index| index.min(self.items.len() - 1)))
+                .or_else(|| previous_index.map(|index| index.min(self.len() - 1)))
         } else {
             Some(0)
         };
@@ -219,5 +270,53 @@ mod tests {
                 message: "engine went away".to_owned()
             }
         );
+    }
+
+    #[test]
+    fn filtering_and_refresh_preserve_visible_selection_and_the_full_snapshot() {
+        let mut l = ResourceList::with_search(|text: &String, query| text.contains(query));
+        l.replace(
+            vec!["apple".into(), "banana".into(), "apricot".into()],
+            String::clone,
+            DateTime::UNIX_EPOCH,
+        );
+        l.select_last();
+        l.set_query("ap".into());
+        assert_eq!(l.len(), 2);
+        assert_eq!(l.selected(), Some(1));
+        assert_eq!(l.selected_item().map(String::as_str), Some("apricot"));
+        l.select_next();
+        assert_eq!(l.selected_item().map(String::as_str), Some("apple"));
+        l.select_previous();
+        assert_eq!(l.selected_item().map(String::as_str), Some("apricot"));
+
+        l.replace(
+            vec![
+                "banana".into(),
+                "apricot".into(),
+                "apple".into(),
+                "grape".into(),
+            ],
+            String::clone,
+            DateTime::UNIX_EPOCH,
+        );
+        assert_eq!(l.len(), 3);
+        assert_eq!(l.selected(), Some(0));
+        assert_eq!(l.selected_item().map(String::as_str), Some("apricot"));
+        l.fail("offline".into());
+        l.set_query(String::new());
+        assert_eq!(l.len(), 4);
+        assert_eq!(l.selected(), Some(1));
+        assert!(matches!(l.load, LoadState::Failed { .. }));
+
+        l.set_query("missing".into());
+        assert!(l.is_empty());
+        assert_eq!(l.selected_item(), None);
+        l.select_next();
+        l.select_previous();
+        assert_eq!(l.selected(), None);
+        l.set_query(String::new());
+        assert_eq!(l.len(), 4);
+        assert_eq!(l.selected(), Some(0));
     }
 }
